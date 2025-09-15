@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Gestão de Canavial</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0.5rem;
+        }
+        .section-header {
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .tab-button.active {
+            border-bottom: 3px solid #10b981;
+            color: #10b981;
+        }
+        .card {
+            background-color: white;
+            padding: 1rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .modal {
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        .modal-content {
+            background-color: white;
+            border-radius: 0.75rem;
+            max-width: 500px;
+            width: 95%;
+            padding: 1.5rem;
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.2);
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #10b981;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .flex-wrap-mobile {
+            flex-wrap: wrap;
+        }
+        .grid-mobile-1 {
+            grid-template-columns: repeat(1, minmax(0, 1fr));
+        }
+        @media (min-width: 640px) {
+            .container {
+                padding: 1rem;
+            }
+            .grid-sm-2 {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .flex-no-wrap-sm {
+                flex-wrap: nowrap;
+            }
+        }
+        @media (min-width: 768px) {
+            .grid-md-2 {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+        @media (min-width: 1024px) {
+            .grid-lg-4 {
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+            }
+        }
+        input, select, button {
+            touch-action: manipulation;
+        }
+    </style>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        setLogLevel('debug'); // Para depurar operações do Firestore
+
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        let app = null;
+        let db = null;
+        let auth = null;
+        let userId = null;
+        let isAuthReady = false;
+
+        let appData = {
+            areas: [],
+            talhoes: [],
+            insumos: [],
+            modelos: [],
+            atividades: [],
+            operacoes: []
+        };
+        
+        // --- Firebase Setup and Authentication ---
+        async function setupFirebase() {
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                document.getElementById('loading-indicator').classList.remove('hidden');
+
+                const maxRetries = 3;
+                let currentRetry = 0;
+
+                const authPromise = new Promise((resolve, reject) => {
+                    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                        if (user) {
+                            userId = user.uid;
+                            console.log('Usuário autenticado com UID:', userId);
+                            isAuthReady = true;
+                            unsubscribe();
+                            resolve();
+                        } else {
+                            // Se a autenticação inicial falhar, tente novamente
+                            if (currentRetry < maxRetries) {
+                                currentRetry++;
+                                console.log(`Falha na autenticação, tentando novamente... Tentativa ${currentRetry}/${maxRetries}`);
+                                if (initialAuthToken) {
+                                    await signInWithCustomToken(auth, initialAuthToken).catch(err => {
+                                        console.error("Falha ao tentar autenticar com token:", err);
+                                        signInAnonymously(auth); // Tentar anônimo como fallback
+                                    });
+                                } else {
+                                    signInAnonymously(auth);
+                                }
+                            } else {
+                                unsubscribe();
+                                reject("Limite de tentativas de autenticação atingido.");
+                            }
+                        }
+                    });
+                });
+                
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken).catch(err => {
+                        console.error("Erro ao autenticar com token, tentando anonimamente:", err);
+                        signInAnonymously(auth);
+                    });
+                } else {
+                    signInAnonymously(auth);
+                }
+
+                await authPromise;
+                startDataListeners();
+                document.getElementById('loading-indicator').classList.add('hidden');
+
+            } catch (error) {
+                console.error("Erro ao configurar o Firebase:", error);
+                showAlert("Erro ao conectar com o banco de dados. Verifique sua conexão e tente novamente.");
+            }
+        }
+        
+        // --- Firestore Data Listeners ---
+        function startDataListeners() {
+            if (!db || !userId) {
+                console.error("Firestore ou UserID não está pronto.");
+                return;
+            }
+
+            const getPrivateCollectionRef = (collectionName) => {
+                return collection(db, `artifacts/${appId}/users/${userId}/${collectionName}`);
+            };
+
+            const listeners = [
+                { name: 'areas', ref: getPrivateCollectionRef('areas') },
+                { name: 'talhoes', ref: getPrivateCollectionRef('talhoes') },
+                { name: 'insumos', ref: getPrivateCollectionRef('insumos') },
+                { name: 'modelos', ref: getPrivateCollectionRef('modelos') },
+                { name: 'atividades', ref: getPrivateCollectionRef('atividades') },
+                { name: 'operacoes', ref: getPrivateCollectionRef('operacoes') }
+            ];
+
+            listeners.forEach(listener => {
+                onSnapshot(listener.ref, (snapshot) => {
+                    if (!isAuthReady) return;
+                    appData[listener.name] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    console.log(`Dados de ${listener.name} atualizados.`, appData[listener.name]);
+                    refreshUI();
+                }, (error) => {
+                    console.error(`Erro ao carregar dados de ${listener.name}: `, error);
+                    showAlert(`Erro ao sincronizar dados de ${listener.name}.`);
+                });
+            });
+        }
+        
+        // Funções de Gerenciamento de Dados
+        async function addOrUpdateDoc(collectionName, data, id = null) {
+            if (!db || !userId) {
+                 console.log("Banco de dados não está pronto para salvar.");
+                 return;
+            }
+            const colRef = collection(db, `artifacts/${appId}/users/${userId}/${collectionName}`);
+            try {
+                if (id) {
+                    await setDoc(doc(colRef, id), data);
+                    console.log(`Documento de ${collectionName} atualizado com ID:`, id);
+                } else {
+                    const docRef = await addDoc(colRef, data);
+                    console.log(`Novo documento de ${collectionName} adicionado com ID:`, docRef.id);
+                }
+            } catch (e) {
+                console.error(`Erro ao salvar ${collectionName}: `, e);
+                showAlert(`Erro ao salvar ${collectionName}.`);
+            }
+        }
+
+        async function deleteDocById(collectionName, id) {
+            if (!db || !userId) {
+                console.log("Banco de dados não está pronto para excluir.");
+                return;
+            }
+            try {
+                await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/${collectionName}`, id));
+                console.log(`Documento de ${collectionName} com ID ${id} excluído.`);
+            } catch (e) {
+                console.error(`Erro ao excluir ${collectionName}: `, e);
+                showAlert(`Erro ao excluir ${collectionName}.`);
+            }
+        }
+
+        // Funções de Utilitário
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+        }
+
+        function showAlert(message) {
+            document.getElementById('alert-message').textContent = message;
+            document.getElementById('modal-alert').classList.remove('hidden');
+        }
+
+        function hideAlert() {
+            document.getElementById('modal-alert').classList.add('hidden');
+        }
+
+        function showConfirm(title, message, onConfirm) {
+            document.getElementById('confirm-title').textContent = title;
+            document.getElementById('confirm-message').textContent = message;
+            document.getElementById('modal-confirm').classList.remove('hidden');
+
+            const btnConfirm = document.getElementById('btn-confirm-action');
+            const btnCancel = document.getElementById('btn-cancel-confirm');
+
+            const confirmHandler = () => {
+                onConfirm();
+                hideConfirm();
+                btnConfirm.removeEventListener('click', confirmHandler);
+            };
+
+            const cancelHandler = () => {
+                hideConfirm();
+                btnConfirm.removeEventListener('click', confirmHandler);
+            };
+
+            btnConfirm.addEventListener('click', confirmHandler);
+            btnCancel.addEventListener('click', cancelHandler);
+        }
+
+        function hideConfirm() {
+            document.getElementById('modal-confirm').classList.add('hidden');
+        }
+        
+        // Funções de Renderização
+        function renderDashboard() {
+            document.getElementById('dashboard-areas').textContent = appData.areas.length;
+            document.getElementById('dashboard-talhoes').textContent = appData.talhoes.length;
+            document.getElementById('dashboard-insumos').textContent = appData.insumos.length;
+            document.getElementById('dashboard-atividades').textContent = appData.atividades.length;
+            
+            let totalCost = 0;
+            appData.operacoes.forEach(op => totalCost += op.custoTotal);
+            let totalArea = 0;
+            appData.talhoes.forEach(t => totalArea += t.areaHa);
+            let avgCostPerHa = totalArea > 0 ? totalCost / totalArea : 0;
+            
+            const summaryHTML = `
+                <p><strong>Custo Total Acumulado:</strong> ${formatCurrency(totalCost)}</p>
+                <p><strong>Área Total Registrada:</strong> ${totalArea.toFixed(2)} ha</p>
+                <p><strong>Custo Médio por Hectare:</strong> ${formatCurrency(avgCostPerHa)}</p>
+            `;
+            document.getElementById('general-summary').innerHTML = summaryHTML;
+
+            // Renderiza o resumo por fazenda
+            const areaSummaryContainer = document.getElementById('dashboard-area-summary');
+            areaSummaryContainer.innerHTML = '';
+            
+            if (appData.areas.length === 0) {
+                 areaSummaryContainer.innerHTML = '<p class="text-center">Cadastre talhões com seu status para ver o resumo aqui.</p>';
+                 return;
+            }
+
+            const summaryByArea = {};
+            appData.areas.forEach(area => {
+                summaryByArea[area.id] = {
+                    name: area.name,
+                    totalHa: 0,
+                    desenvolvimentoHa: 0,
+                    colherHa: 0,
+                    renovarHa: 0,
+                };
+            });
+
+            appData.talhoes.forEach(talhao => {
+                const area = summaryByArea[talhao.areaId];
+                if (area) {
+                    area.totalHa += talhao.areaHa;
+                    if (talhao.status === 'Em Desenvolvimento') {
+                        area.desenvolvimentoHa += talhao.areaHa;
+                    } else if (talhao.status === 'Pronto para Colher') {
+                        area.colherHa += talhao.areaHa;
+                    } else if (talhao.status === 'Em Renovação') {
+                        area.renovarHa += talhao.areaHa;
+                    }
+                }
+            });
+            
+            let summaryHTMLContent = '';
+            appData.areas.forEach(area => {
+                const summary = summaryByArea[area.id];
+                if (summary) {
+                     summaryHTMLContent += `
+                         <div class="border border-gray-200 rounded-lg p-3 mb-3">
+                             <h4 class="font-bold text-gray-800">${summary.name}</h4>
+                             <ul class="text-xs text-gray-600 mt-1 space-y-1">
+                                 <li>Área Total: <span class="font-semibold">${summary.totalHa.toFixed(2)} ha</span></li>
+                                 <li>Em Desenvolvimento: <span class="font-semibold text-green-600">${summary.desenvolvimentoHa.toFixed(2)} ha</span></li>
+                                 <li>Pronto para Colher: <span class="font-semibold text-yellow-600">${summary.colherHa.toFixed(2)} ha</span></li>
+                                 <li>Em Renovação: <span class="font-semibold text-red-600">${summary.renovarHa.toFixed(2)} ha</span></li>
+                             </ul>
+                         </div>
+                     `;
+                }
+            });
+
+            areaSummaryContainer.innerHTML = summaryHTMLContent || '<p class="text-center">Cadastre talhões com seu status para ver o resumo aqui.</p>';
+        }
+
+        function renderAreas() {
+            const listContainer = document.getElementById('list-areas');
+            listContainer.innerHTML = '';
+            appData.areas.forEach(area => {
+                const div = document.createElement('div');
+                div.className = 'flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-2';
+                div.innerHTML = `
+                    <p class="font-medium text-sm">${area.name}</p>
+                    <div class="flex gap-2 text-sm">
+                        <button class="btn-edit-area text-blue-500 hover:text-blue-700" data-id="${area.id}">Editar</button>
+                        <button class="btn-delete-area text-red-500 hover:text-red-700" data-id="${area.id}">Excluir</button>
+                    </div>
+                `;
+                listContainer.appendChild(div);
+            });
+        }
+
+        function renderTalhoes() {
+            const listContainer = document.getElementById('list-talhoes');
+            listContainer.innerHTML = '';
+            appData.talhoes.forEach(talhao => {
+                const area = appData.areas.find(a => a.id === talhao.areaId);
+                const div = document.createElement('div');
+                div.className = 'flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-2';
+                div.innerHTML = `
+                    <div>
+                        <p class="font-medium text-sm">${talhao.name}</p>
+                        <p class="text-xs text-gray-500">${talhao.areaHa.toFixed(2)} ha (${area ? area.name : 'N/A'}) - Status: ${talhao.status}</p>
+                    </div>
+                    <div class="flex gap-2 text-sm">
+                        <button class="btn-edit-talhao text-blue-500 hover:text-blue-700" data-id="${talhao.id}">Editar</button>
+                        <button class="btn-delete-talhao text-red-500 hover:text-red-700" data-id="${talhao.id}">Excluir</button>
+                    </div>
+                `;
+                listContainer.appendChild(div);
+            });
+        }
+
+        function renderInsumos() {
+            const listContainer = document.getElementById('list-insumos');
+            listContainer.innerHTML = '';
+            appData.insumos.forEach(insumo => {
+                const div = document.createElement('div');
+                div.className = 'flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-2';
+                div.innerHTML = `
+                    <div>
+                        <p class="font-medium text-sm">${insumo.name}</p>
+                        <p class="text-xs text-gray-500">Estoque: ${insumo.quantity} ${insumo.unit} | Custo: ${formatCurrency(insumo.unitCost)}/${insumo.unit}</p>
+                    </div>
+                    <div class="flex gap-2 text-sm">
+                        <button class="btn-edit-insumo text-blue-500 hover:text-blue-700" data-id="${insumo.id}">Editar</button>
+                        <button class="btn-delete-insumo text-red-500 hover:text-red-700" data-id="${insumo.id}">Excluir</button>
+                    </div>
+                `;
+                listContainer.appendChild(div);
+            });
+        }
+
+        function renderModelos() {
+            const listContainer = document.getElementById('list-modelos');
+            listContainer.innerHTML = '';
+            appData.modelos.forEach(modelo => {
+                const div = document.createElement('div');
+                div.className = 'flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200 mb-2';
+                div.innerHTML = `
+                    <div>
+                        <p class="font-medium text-sm">${modelo.name}</p>
+                        <p class="text-xs text-gray-500">${modelo.description} | Unidade Padrão: ${modelo.unit}</p>
+                    </div>
+                    <div class="flex gap-2 text-sm">
+                        <button class="btn-edit-modelo text-blue-500 hover:text-blue-700" data-id="${modelo.id}">Editar</button>
+                        <button class="btn-delete-modelo text-red-500 hover:text-red-700" data-id="${modelo.id}">Excluir</button>
+                    </div>
+                `;
+                listContainer.appendChild(div);
+            });
+        }
+
+        function renderAtividades() {
+            const listContainer = document.getElementById('list-atividades');
+            listContainer.innerHTML = '';
+            if (appData.atividades.length === 0) {
+                listContainer.innerHTML = '<p class="text-center text-gray-500 text-sm">Nenhuma atividade registrada ainda.</p>';
+                return;
+            }
+
+            appData.atividades.forEach(atividade => {
+                const talhao = appData.talhoes.find(t => t.id === atividade.talhaoId);
+                let totalCost = 0;
+                let operationsHTML = '';
+                const relatedOps = appData.operacoes.filter(op => op.atividadeId === atividade.id);
+                
+                if (relatedOps.length > 0) {
+                    operationsHTML = '<ul class="mt-2 text-xs text-gray-600 space-y-1">';
+                    relatedOps.forEach(op => {
+                         // Parse os insumos do JSON string
+                         const insumos = JSON.parse(op.insumosJson || '[]');
+                         let insumosText = insumos.map(i => `${i.name}: ${i.quantity} ${i.unit}`).join(', ');
+                         insumosText = insumosText ? ` - Insumos: ${insumosText}` : '';
+                         
+                         let operationCost = op.unitCost * op.quantity;
+                         let insumosCost = insumos.reduce((sum, current) => sum + (current.quantity * current.unitCost), 0);
+                         let totalOpCost = operationCost + insumosCost;
+
+                        operationsHTML += `<li>- ${op.description}: ${op.quantity} ${op.unit} (${formatCurrency(totalOpCost)}) ${insumosText}</li>`;
+                        totalCost += totalOpCost;
+                    });
+                    operationsHTML += '</ul>';
+                }
+
+                const div = document.createElement('div');
+                div.className = 'card mb-3';
+                div.innerHTML = `
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center">
+                        <div>
+                            <p class="text-base font-semibold text-gray-800">${atividade.name} - ${atividade.safra}</p>
+                            <p class="text-xs text-gray-500">Talhão: ${talhao ? talhao.name : 'N/A'}</p>
+                            <p class="font-bold text-gray-900 text-sm mt-1">Custo Total da Atividade: ${formatCurrency(totalCost)}</p>
+                        </div>
+                        <div class="flex gap-2 mt-2 sm:mt-0 text-xs">
+                             <button class="btn-add-operacao text-green-500 hover:text-green-700" data-id="${atividade.id}">Adicionar Operação</button>
+                            <button class="btn-edit-atividade text-blue-500 hover:text-blue-700" data-id="${atividade.id}">Editar</button>
+                            <button class="btn-delete-atividade text-red-500 hover:text-red-700" data-id="${atividade.id}">Excluir</button>
+                        </div>
+                    </div>
+                    ${operationsHTML}
+                `;
+                listContainer.appendChild(div);
+            });
+        }
+        
+        // Funções de Relatórios
+        function updateReportSelectors() {
+            const selectSafra = document.getElementById('select-safra');
+            const selectTalhao = document.getElementById('select-talhao');
+            const selectAtividade = document.getElementById('select-atividade');
+
+            // Limpa as opções
+            selectSafra.innerHTML = '<option value="">- Selecione a Safra -</option>';
+            selectTalhao.innerHTML = '<option value="">- Selecione o Talhão -</option>';
+            selectAtividade.innerHTML = '<option value="">- Selecione a Atividade -</option>';
+
+            // Preenche Safra
+            const uniqueSafras = [...new Set(appData.atividades.map(a => a.safra))].sort();
+            uniqueSafras.forEach(safra => {
+                const option = document.createElement('option');
+                option.value = safra;
+                option.textContent = safra;
+                selectSafra.appendChild(option);
+            });
+
+            // Preenche Talhão
+            appData.talhoes.forEach(talhao => {
+                const option = document.createElement('option');
+                option.value = talhao.id;
+                option.textContent = talhao.name;
+                selectTalhao.appendChild(option);
+            });
+
+            // Adiciona evento para mudar o botão e o seletor de atividade
+            document.getElementById('select-safra').addEventListener('change', updateReportButton);
+            document.getElementById('select-talhao').addEventListener('change', updateReportButton);
+            document.getElementById('select-atividade').addEventListener('change', updateReportButton);
+        }
+
+        function updateReportButton() {
+            const safra = document.getElementById('select-safra').value;
+            const talhaoId = document.getElementById('select-talhao').value;
+            const atividadeId = document.getElementById('select-atividade').value;
+            const btn = document.getElementById('btn-generate-report');
+            const btnText = document.getElementById('report-button-text');
+            const selectAtividade = document.getElementById('select-atividade');
+
+            // Habilita/desabilita o botão e atualiza o texto
+            if (safra) {
+                btn.disabled = false;
+                btnText.textContent = 'Gerar Relatório da Safra';
+            } else if (talhaoId) {
+                btn.disabled = false;
+                btnText.textContent = 'Gerar Relatório do Talhão';
+            } else if (atividadeId) {
+                btn.disabled = false;
+                btnText.textContent = 'Gerar Relatório da Atividade';
+            } else {
+                btn.disabled = true;
+                btnText.textContent = 'Gerar Relatório';
+            }
+
+            // Preenche a lista de atividades com base no talhão selecionado
+            selectAtividade.innerHTML = '<option value="">- Selecione a Atividade -</option>';
+            if (talhaoId) {
+                const filteredActivities = appData.atividades.filter(a => a.talhaoId === talhaoId);
+                filteredActivities.forEach(atividade => {
+                    const option = document.createElement('option');
+                    option.value = atividade.id;
+                    option.textContent = atividade.name;
+                    selectAtividade.appendChild(option);
+                });
+            }
+        }
+
+        function generateReport() {
+            const safra = document.getElementById('select-safra').value;
+            const talhaoId = document.getElementById('select-talhao').value;
+            const atividadeId = document.getElementById('select-atividade').value;
+
+            let filteredActivities = [];
+            let reportTitle = '';
+            let involvedHa = 0;
+
+            if (safra) {
+                reportTitle = `Relatório por Safra: ${safra}`;
+                filteredActivities = appData.atividades.filter(a => a.safra === safra);
+                const uniqueTalhaoIds = [...new Set(filteredActivities.map(a => a.talhaoId))];
+                uniqueTalhaoIds.forEach(id => {
+                    const talhao = appData.talhoes.find(t => t.id == id);
+                    if (talhao) {
+                        involvedHa += talhao.areaHa;
+                    }
+                });
+            } else if (talhaoId) {
+                const talhao = appData.talhoes.find(t => t.id == talhaoId);
+                reportTitle = `Relatório por Talhão: ${talhao ? talhao.name : 'N/A'}`;
+                filteredActivities = appData.atividades.filter(a => a.talhaoId == talhaoId);
+                involvedHa = talhao ? talhao.areaHa : 0;
+            } else if (atividadeId) {
+                const atividade = appData.atividades.find(a => a.id == atividadeId);
+                const talhao = appData.talhoes.find(t => t.id == atividade.talhaoId);
+                reportTitle = `Relatório da Atividade: ${atividade ? atividade.name : 'N/A'}`;
+                filteredActivities = [atividade];
+                involvedHa = talhao ? talhao.areaHa : 0;
+            } else {
+                document.getElementById('report-output').innerHTML = '<p class="text-center text-gray-500 text-sm">Selecione um filtro para gerar o relatório.</p>';
+                return;
+            }
+            
+            if (filteredActivities.length === 0) {
+                 document.getElementById('report-output').innerHTML = '<p class="text-center text-gray-500 text-sm">Nenhum dado encontrado para o filtro selecionado.</p>';
+                 return;
+            }
+
+            let totalCost = 0;
+            const operationsDetails = [];
+            
+            const operations = appData.operacoes.filter(op => 
+                filteredActivities.some(act => act.id === op.atividadeId)
+            );
+
+            operations.forEach(op => {
+                let opCost = op.unitCost * op.quantity;
+                let insumos = JSON.parse(op.insumosJson || '[]');
+                let insumosCost = insumos.reduce((sum, i) => sum + (i.quantity * i.unitCost), 0);
+                let totalOpCost = opCost + insumosCost;
+                totalCost += totalOpCost;
+                
+                operationsDetails.push({
+                    description: op.description,
+                    quantity: op.quantity,
+                    unit: op.unit,
+                    cost: totalOpCost,
+                    insumos: insumos
+                });
+            });
+
+            let outputHTML = `
+                <h3 class="text-base font-semibold mb-2">${reportTitle}</h3>
+                <p class="text-sm"><strong>Custo Total:</strong> ${formatCurrency(totalCost)}</p>
+                <p class="text-sm"><strong>Hectares Envolvidos:</strong> ${involvedHa.toFixed(2)} ha</p>
+            `;
+            if (involvedHa > 0) {
+                 const costPerHa = totalCost / involvedHa;
+                 outputHTML += `<p class="text-sm"><strong>Custo por Hectare:</strong> ${formatCurrency(costPerHa)}</p>`;
+            }
+
+            if (operationsDetails.length > 0) {
+                outputHTML += '<h4 class="text-base font-semibold mt-4 mb-2">Detalhes das Operações:</h4>';
+                outputHTML += '<ul class="text-sm space-y-2">';
+                operationsDetails.forEach(op => {
+                    let insumosHtml = op.insumos.map(i => `${i.name} (${i.quantity} ${i.unit}, ${formatCurrency(i.quantity * i.unitCost)})`).join(', ');
+                    insumosHtml = insumosHtml ? `<p class="mt-1">Insumos: ${insumosHtml}</p>` : '';
+                    outputHTML += `<li><strong>${op.description}:</strong> ${op.quantity} ${op.unit} (${formatCurrency(op.cost)}) ${insumosHtml}</li>`;
+                });
+                outputHTML += '</ul>';
+            } else {
+                outputHTML += '<p class="text-gray-500 text-sm mt-4">Nenhuma operação registrada para este filtro.</p>';
+            }
+            
+            document.getElementById('report-output').innerHTML = outputHTML;
+        }
+
+        function refreshUI() {
+            renderDashboard();
+            renderAreas();
+            renderTalhoes();
+            renderInsumos();
+            renderModelos();
+            renderAtividades();
+            updateReportSelectors();
+        }
+
+        // Funções de Gerenciamento
+        async function manageArea(area) {
+            await addOrUpdateDoc('areas', { name: area.name }, area.id);
+            hideModal('area');
+        }
+
+        async function manageTalhao(talhao) {
+            await addOrUpdateDoc('talhoes', { name: talhao.name, areaHa: talhao.areaHa, areaId: talhao.areaId, status: talhao.status }, talhao.id);
+            hideModal('talhao');
+        }
+
+        async function manageInsumo(insumo) {
+            await addOrUpdateDoc('insumos', { name: insumo.name, quantity: insumo.quantity, unit: insumo.unit, unitCost: insumo.unitCost }, insumo.id);
+            hideModal('insumo');
+        }
+
+        async function manageModelo(modelo) {
+            await addOrUpdateDoc('modelos', { name: modelo.name, description: modelo.description, unit: modelo.unit }, modelo.id);
+            hideModal('modelo');
+        }
+
+        async function manageAtividade(atividade) {
+            await addOrUpdateDoc('atividades', { name: atividade.name, safra: atividade.safra, talhaoId: atividade.talhaoId }, atividade.id);
+            hideModal('atividade');
+        }
+
+        async function manageOperacao(operacao) {
+            let totalCost = parseFloat(operacao.unitCost) * parseFloat(operacao.quantity);
+            const insumosUsed = [];
+            const insumoElements = document.querySelectorAll('.insumo-item');
+            
+            // Validar e processar cada insumo adicionado
+            for (const el of insumoElements) {
+                const insumoId = el.querySelector('select').value;
+                const insumoQuantity = parseFloat(el.querySelector('[id^="operacao-insumo-quantity"]').value);
+                
+                if (insumoId && !isNaN(insumoQuantity) && insumoQuantity > 0) {
+                    const insumo = appData.insumos.find(i => i.id === insumoId);
+                    if (insumo) {
+                        if (insumoQuantity > insumo.quantity) {
+                            showAlert(`Estoque insuficiente para o insumo: ${insumo.name}`);
+                            return;
+                        }
+                        
+                        const insumoCost = insumoQuantity * insumo.unitCost;
+                        totalCost += insumoCost;
+                        
+                        // Atualizar estoque
+                        const updatedInsumo = { ...insumo, quantity: insumo.quantity - insumoQuantity };
+                        await addOrUpdateDoc('insumos', updatedInsumo, insumo.id);
+                        
+                        insumosUsed.push({
+                            id: insumo.id,
+                            name: insumo.name,
+                            quantity: insumoQuantity,
+                            unit: insumo.unit,
+                            unitCost: insumo.unitCost,
+                            totalCost: insumoCost
+                        });
+                    }
+                }
+            }
+
+            await addOrUpdateDoc('operacoes', {
+                atividadeId: operacao.atividadeId,
+                description: operacao.description,
+                quantity: parseFloat(operacao.quantity),
+                unit: operacao.unit,
+                unitCost: parseFloat(operacao.unitCost),
+                custoTotal: totalCost,
+                insumosJson: JSON.stringify(insumosUsed) // Armazenar como string
+            }, operacao.id);
+
+            hideModal('operacao');
+        }
+
+        // Funções de Exclusão
+        function deleteEntity(type, id) {
+            let canDelete = true;
+            let relatedItems = [];
+
+            if (type === 'area') {
+                relatedItems = appData.talhoes.filter(t => t.areaId == id);
+                if (relatedItems.length > 0) {
+                    showAlert('Não é possível excluir esta área. Existem talhões associados a ela.');
+                    canDelete = false;
+                }
+            } else if (type === 'talhao') {
+                relatedItems = appData.atividades.filter(a => a.talhaoId == id);
+                if (relatedItems.length > 0) {
+                    showAlert('Não é possível excluir este talhão. Existem atividades associadas a ele.');
+                    canDelete = false;
+                }
+            } else if (type === 'insumo') {
+                relatedItems = appData.operacoes.filter(op => {
+                    try {
+                        const insumos = JSON.parse(op.insumosJson);
+                        return insumos.some(i => i.id === id);
+                    } catch {
+                        return false;
+                    }
+                });
+                if (relatedItems.length > 0) {
+                    showAlert('Não é possível excluir este insumo. Ele foi utilizado em operações.');
+                    canDelete = false;
+                }
+            } else if (type === 'modelo') {
+                // Nenhum item associado diretamente, pode excluir.
+            } else if (type === 'atividade') {
+                relatedItems = appData.operacoes.filter(op => op.atividadeId == id);
+                relatedItems.forEach(op => deleteDocById('operacoes', op.id));
+            }
+
+            if (canDelete) {
+                showConfirm(`Confirmar Exclusão de ${type}`, `Tem certeza que deseja excluir este item?`, async () => {
+                    await deleteDocById(`${type}s`, id);
+                });
+            }
+        }
+
+        // Funções para Modais
+        function showModal(type, data = null) {
+            const modal = document.getElementById(`modal-${type}`);
+            const form = document.getElementById(`form-${type}`);
+            form.reset();
+            if (data) {
+                document.getElementById(`${type}-id`).value = data.id;
+                document.getElementById(`modal-${type}-title`).textContent = `Editar ${type.charAt(0).toUpperCase() + type.slice(1)}`;
+                if (type === 'area') {
+                    document.getElementById('area-name').value = data.name;
+                } else if (type === 'talhao') {
+                    document.getElementById('talhao-name').value = data.name;
+                    document.getElementById('talhao-area').value = data.areaHa;
+                    const areaSelect = document.getElementById('talhao-area-select');
+                    areaSelect.innerHTML = '';
+                    appData.areas.forEach(area => {
+                        const option = document.createElement('option');
+                        option.value = area.id;
+                        option.textContent = area.name;
+                        areaSelect.appendChild(option);
+                    });
+                    document.getElementById('talhao-area-select').value = data.areaId;
+                    document.getElementById('talhao-status-select').value = data.status;
+                } else if (type === 'insumo') {
+                    document.getElementById('insumo-name').value = data.name;
+                    document.getElementById('insumo-quantity').value = data.quantity;
+                    document.getElementById('insumo-unit').value = data.unit;
+                    document.getElementById('insumo-cost').value = data.unitCost;
+                } else if (type === 'modelo') {
+                    document.getElementById('modelo-name').value = data.name;
+                    document.getElementById('modelo-description').value = data.description;
+                    document.getElementById('modelo-unit').value = data.unit;
+                } else if (type === 'atividade') {
+                    document.getElementById('atividade-name').value = data.name;
+                    document.getElementById('atividade-safra').value = data.safra;
+                    const talhaoSelect = document.getElementById('atividade-talhao-select');
+                    talhaoSelect.innerHTML = '';
+                    appData.talhoes.forEach(talhao => {
+                        const option = document.createElement('option');
+                        option.value = talhao.id;
+                        option.textContent = talhao.name;
+                        talhaoSelect.appendChild(option);
+                    });
+                    document.getElementById('atividade-talhao-select').value = data.talhaoId;
+                }
+            } else {
+                document.getElementById(`${type}-id`).value = '';
+                document.getElementById(`modal-${type}-title`).textContent = `Adicionar ${type.charAt(0).toUpperCase() + type.slice(1)}`;
+                if (type === 'atividade') {
+                     document.getElementById('atividade-safra').value = new Date().getFullYear();
+                     const talhaoSelect = document.getElementById('atividade-talhao-select');
+                     talhaoSelect.innerHTML = '';
+                     appData.talhoes.forEach(talhao => {
+                        const option = document.createElement('option');
+                        option.value = talhao.id;
+                        option.textContent = talhao.name;
+                        talhaoSelect.appendChild(option);
+                    });
+                }
+                if (type === 'talhao') {
+                    const areaSelect = document.getElementById('talhao-area-select');
+                    areaSelect.innerHTML = '';
+                    appData.areas.forEach(area => {
+                        const option = document.createElement('option');
+                        option.value = area.id;
+                        option.textContent = area.name;
+                        areaSelect.appendChild(option);
+                    });
+                }
+            }
+            if (type === 'operacao') {
+                 document.getElementById('insumos-list').innerHTML = '';
+                 document.getElementById('operacao-description').value = '';
+                 document.getElementById('operacao-quantity').value = '';
+                 document.getElementById('operacao-unit').value = '';
+                 document.getElementById('operacao-cost').value = '';
+            }
+            modal.classList.remove('hidden');
+        }
+
+        function hideModal(type) {
+            document.getElementById(`modal-${type}`).classList.add('hidden');
+        }
+        
+        function addInsumoField() {
+            const insumosList = document.getElementById('insumos-list');
+            const insumoCount = insumosList.children.length;
+
+            const div = document.createElement('div');
+            div.className = 'insumo-item flex items-end gap-2 mb-4';
+            div.innerHTML = `
+                <div class="flex-1">
+                    <label for="operacao-insumo-select-${insumoCount}" class="block text-sm font-medium text-gray-700">Insumo</label>
+                    <select id="operacao-insumo-select-${insumoCount}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2"></select>
+                </div>
+                <div class="flex-1">
+                    <label for="operacao-insumo-quantity-${insumoCount}" class="block text-sm font-medium text-gray-700">Quantidade</label>
+                    <input type="number" id="operacao-insumo-quantity-${insumoCount}" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" placeholder="Ex: 50">
+                </div>
+                <div class="w-8 h-8 flex items-center justify-center">
+                    <button type="button" class="btn-remove-insumo text-red-500 hover:text-red-700">
+                         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            `;
+            insumosList.appendChild(div);
+
+            const insumoSelect = document.getElementById(`operacao-insumo-select-${insumoCount}`);
+            insumoSelect.innerHTML = '<option value="">- Selecione um Insumo -</option>';
+            appData.insumos.forEach(insumo => {
+                const option = document.createElement('option');
+                option.value = insumo.id;
+                option.textContent = `${insumo.name} (${insumo.unit})`;
+                insumoSelect.appendChild(option);
+            });
+
+            // Adicionar listener para remover o campo
+            div.querySelector('.btn-remove-insumo').addEventListener('click', () => {
+                div.remove();
+            });
+        }
+        
+        // Listeners
+        window.onload = function() {
+            setupFirebase();
+
+            // Navegação por abas
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.addEventListener('click', () => {
+                    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(content => content.classList.add('hidden'));
+                    button.classList.add('active');
+                    document.getElementById(button.id.replace('btn-tab-', 'tab-')).classList.remove('hidden');
+                });
+            });
+
+            // Modais de Cadastro
+            document.getElementById('btn-add-area').addEventListener('click', () => showModal('area'));
+            document.getElementById('btn-add-talhao').addEventListener('click', () => {
+                const select = document.getElementById('talhao-area-select');
+                select.innerHTML = '';
+                appData.areas.forEach(area => {
+                    const option = document.createElement('option');
+                    option.value = area.id;
+                    option.textContent = area.name;
+                    select.appendChild(option);
+                });
+                if (appData.areas.length === 0) {
+                    showAlert('Por favor, adicione uma fazenda (área) antes de cadastrar um talhão.');
+                    return;
+                }
+                showModal('talhao');
+            });
+            document.getElementById('btn-add-insumo').addEventListener('click', () => showModal('insumo'));
+            document.getElementById('btn-add-modelo').addEventListener('click', () => showModal('modelo'));
+            document.getElementById('btn-add-atividade').addEventListener('click', () => {
+                const select = document.getElementById('atividade-talhao-select');
+                select.innerHTML = '';
+                 appData.talhoes.forEach(talhao => {
+                    const option = document.createElement('option');
+                    option.value = talhao.id;
+                    option.textContent = talhao.name;
+                    select.appendChild(option);
+                });
+                if (appData.talhoes.length === 0) {
+                    showAlert('Por favor, adicione um talhão antes de cadastrar uma atividade.');
+                    return;
+                }
+                showModal('atividade');
+            });
+
+            // Formulários
+            document.getElementById('form-area').addEventListener('submit', (e) => {
+                e.preventDefault();
+                manageArea({
+                    id: document.getElementById('area-id').value || null,
+                    name: document.getElementById('area-name').value
+                });
+            });
+
+            document.getElementById('form-talhao').addEventListener('submit', (e) => {
+                e.preventDefault();
+                manageTalhao({
+                    id: document.getElementById('talhao-id').value || null,
+                    name: document.getElementById('talhao-name').value,
+                    areaHa: parseFloat(document.getElementById('talhao-area').value),
+                    areaId: document.getElementById('talhao-area-select').value,
+                    status: document.getElementById('talhao-status-select').value
+                });
+            });
+
+            document.getElementById('form-insumo').addEventListener('submit', (e) => {
+                e.preventDefault();
+                manageInsumo({
+                    id: document.getElementById('insumo-id').value || null,
+                    name: document.getElementById('insumo-name').value,
+                    quantity: parseFloat(document.getElementById('insumo-quantity').value),
+                    unit: document.getElementById('insumo-unit').value,
+                    unitCost: parseFloat(document.getElementById('insumo-cost').value)
+                });
+            });
+
+            document.getElementById('form-modelo').addEventListener('submit', (e) => {
+                e.preventDefault();
+                manageModelo({
+                    id: document.getElementById('modelo-id').value || null,
+                    name: document.getElementById('modelo-name').value,
+                    description: document.getElementById('modelo-description').value,
+                    unit: document.getElementById('modelo-unit').value
+                });
+            });
+            
+            document.getElementById('form-atividade').addEventListener('submit', (e) => {
+                e.preventDefault();
+                manageAtividade({
+                    id: document.getElementById('atividade-id').value || null,
+                    name: document.getElementById('atividade-name').value,
+                    safra: document.getElementById('atividade-safra').value,
+                    talhaoId: document.getElementById('atividade-talhao-select').value
+                });
+            });
+
+            document.getElementById('form-operacao').addEventListener('submit', (e) => {
+                e.preventDefault();
+                manageOperacao({
+                    id: document.getElementById('operacao-id').value || null,
+                    atividadeId: document.getElementById('operacao-atividade-id').value,
+                    description: document.getElementById('operacao-description').value,
+                    quantity: document.getElementById('operacao-quantity').value,
+                    unit: document.getElementById('operacao-unit').value,
+                    unitCost: document.getElementById('operacao-cost').value,
+                });
+            });
+            
+            // Botão para adicionar insumo dinamicamente
+            document.getElementById('btn-add-insumo-field').addEventListener('click', addInsumoField);
+
+            // Cancelar modais
+            document.querySelectorAll('[id^="btn-cancel-"]').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const type = e.target.id.split('-')[2];
+                    hideModal(type);
+                });
+            });
+
+            document.getElementById('btn-ok-alert').addEventListener('click', hideAlert);
+
+            // Delegação de eventos para botões de edição/exclusão
+            document.getElementById('list-areas').addEventListener('click', (e) => {
+                const id = e.target.dataset.id;
+                if (e.target.classList.contains('btn-edit-area')) {
+                    const area = appData.areas.find(a => a.id === id);
+                    if (area) showModal('area', area);
+                } else if (e.target.classList.contains('btn-delete-area')) {
+                    deleteEntity('area', id);
+                }
+            });
+            
+            document.getElementById('list-talhoes').addEventListener('click', (e) => {
+                const id = e.target.dataset.id;
+                if (e.target.classList.contains('btn-edit-talhao')) {
+                    const talhao = appData.talhoes.find(t => t.id === id);
+                    if (talhao) showModal('talhao', talhao);
+                } else if (e.target.classList.contains('btn-delete-talhao')) {
+                    deleteEntity('talhao', id);
+                }
+            });
+
+            document.getElementById('list-insumos').addEventListener('click', (e) => {
+                const id = e.target.dataset.id;
+                if (e.target.classList.contains('btn-edit-insumo')) {
+                    const insumo = appData.insumos.find(i => i.id === id);
+                    if (insumo) showModal('insumo', insumo);
+                } else if (e.target.classList.contains('btn-delete-insumo')) {
+                    deleteEntity('insumo', id);
+                }
+            });
+
+            document.getElementById('list-modelos').addEventListener('click', (e) => {
+                const id = e.target.dataset.id;
+                if (e.target.classList.contains('btn-edit-modelo')) {
+                    const modelo = appData.modelos.find(m => m.id === id);
+                    if (modelo) showModal('modelo', modelo);
+                } else if (e.target.classList.contains('btn-delete-modelo')) {
+                    deleteEntity('modelo', id);
+                }
+            });
+
+            document.getElementById('list-atividades').addEventListener('click', (e) => {
+                const id = e.target.dataset.id;
+                if (e.target.classList.contains('btn-add-operacao')) {
+                     const selectModelo = document.getElementById('operacao-modelo-select');
+                     selectModelo.innerHTML = '<option value="">- Selecione um Modelo (opcional) -</option>';
+                     appData.modelos.forEach(m => {
+                         const option = document.createElement('option');
+                         option.value = m.id;
+                         option.textContent = m.name;
+                         selectModelo.appendChild(option);
+                     });
+                     document.getElementById('operacao-atividade-id').value = id;
+                     showModal('operacao');
+                } else if (e.target.classList.contains('btn-edit-atividade')) {
+                    const atividade = appData.atividades.find(a => a.id === id);
+                    if (atividade) showModal('atividade', atividade);
+                } else if (e.target.classList.contains('btn-delete-atividade')) {
+                    deleteEntity('atividade', id);
+                }
+            });
+
+            // Autocompletar form de operação
+            document.getElementById('operacao-modelo-select').addEventListener('change', (e) => {
+                const modelo = appData.modelos.find(m => m.id === e.target.value);
+                if (modelo) {
+                    document.getElementById('operacao-description').value = modelo.description;
+                    document.getElementById('operacao-unit').value = modelo.unit;
+                    document.getElementById('operacao-quantity').value = 1;
+                    document.getElementById('operacao-cost').value = 0;
+                } else {
+                     document.getElementById('operacao-description').value = '';
+                    document.getElementById('operacao-unit').value = '';
+                    document.getElementById('operacao-quantity').value = '';
+                    document.getElementById('operacao-cost').value = '';
+                }
+            });
+
+            // Lógica do novo botão de relatórios
+            document.getElementById('btn-generate-report').addEventListener('click', generateReport);
+
+            document.getElementById('select-talhao').addEventListener('change', updateReportButton);
+            document.getElementById('select-safra').addEventListener('change', updateReportButton);
+            document.getElementById('select-atividade').addEventListener('change', updateReportButton);
+
+        };
+    </script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+<div class="container py-4">
+    <div class="bg-white rounded-xl shadow-lg p-6">
+        <h1 class="text-2xl font-bold mb-2 text-center text-gray-900">Sistema de Gestão de Canavial</h1>
+        <p class="text-sm text-center text-gray-500 mb-6">Controle fazendas, talhões, insumos e operações.</p>
+
+        <!-- Loading Indicator -->
+        <div id="loading-indicator" class="flex justify-center items-center py-10 hidden">
+            <div class="spinner"></div>
+            <p class="ml-2 text-gray-500">Carregando dados...</p>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="flex flex-wrap flex-no-wrap-sm justify-center mb-6 border-b border-gray-200">
+            <button id="btn-tab-dashboard" class="tab-button active py-2 px-4 font-medium text-sm text-gray-600 hover:bg-gray-50 transition-colors duration-200">Painel de Controle</button>
+            <button id="btn-tab-areas" class="tab-button py-2 px-4 font-medium text-sm text-gray-600 hover:bg-gray-50 transition-colors duration-200">Fazendas</button>
+            <button id="btn-tab-talhoes" class="tab-button py-2 px-4 font-medium text-sm text-gray-600 hover:bg-gray-50 transition-colors duration-200">Talhões</button>
+            <button id="btn-tab-insumos" class="tab-button py-2 px-4 font-medium text-sm text-gray-600 hover:bg-gray-50 transition-colors duration-200">Insumos</button>
+            <button id="btn-tab-modelos" class="tab-button py-2 px-4 font-medium text-sm text-gray-600 hover:bg-gray-50 transition-colors duration-200">Modelos</button>
+            <button id="btn-tab-atividades" class="tab-button py-2 px-4 font-medium text-sm text-gray-600 hover:bg-gray-50 transition-colors duration-200">Atividades</button>
+            <button id="btn-tab-relatorios" class="tab-button py-2 px-4 font-medium text-sm text-gray-600 hover:bg-gray-50 transition-colors duration-200">Relatórios</button>
+        </div>
+
+        <!-- Tab Content -->
+        
+        <!-- Dashboard Tab -->
+        <div id="tab-dashboard" class="tab-content">
+            <h2 class="text-xl font-semibold mb-4 section-header">Resumo</h2>
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <div class="card text-center">
+                    <p class="text-4xl font-bold text-gray-900" id="dashboard-areas">0</p>
+                    <p class="text-sm text-gray-500">Fazendas</p>
+                </div>
+                <div class="card text-center">
+                    <p class="text-4xl font-bold text-gray-900" id="dashboard-talhoes">0</p>
+                    <p class="text-sm text-gray-500">Talhões</p>
+                </div>
+                <div class="card text-center">
+                    <p class="text-4xl font-bold text-gray-900" id="dashboard-insumos">0</p>
+                    <p class="text-sm text-gray-500">Insumos</p>
+                </div>
+                <div class="card text-center">
+                    <p class="text-4xl font-bold text-gray-900" id="dashboard-atividades">0</p>
+                    <p class="text-sm text-gray-500">Atividades</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Resumo Geral -->
+                <div class="card">
+                    <h3 class="text-lg font-semibold mb-2">Resumo Geral</h3>
+                    <div id="general-summary" class="text-sm text-gray-600 space-y-1">
+                        <p><strong>Custo Total Acumulado:</strong> R$ 0,00</p>
+                        <p><strong>Área Total Registrada:</strong> 0.00 ha</p>
+                        <p><strong>Custo Médio por Hectare:</strong> R$ 0,00</p>
+                    </div>
+                </div>
+
+                <!-- Resumo por Fazenda -->
+                <div class="card">
+                    <h3 class="text-lg font-semibold mb-2">Resumo por Fazenda</h3>
+                    <div id="dashboard-area-summary">
+                        <p class="text-center text-gray-500 text-sm">Cadastre talhões com seu status para ver o resumo aqui.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Areas Tab -->
+        <div id="tab-areas" class="tab-content hidden">
+            <h2 class="text-xl font-semibold mb-4 section-header">Fazendas</h2>
+            <button id="btn-add-area" class="w-full bg-green-600 text-white rounded-full py-2 px-4 mb-4 hover:bg-green-700 transition-colors duration-200 font-bold">Adicionar Fazenda</button>
+            <div id="list-areas" class="space-y-2"></div>
+        </div>
+
+        <!-- Talhões Tab -->
+        <div id="tab-talhoes" class="tab-content hidden">
+            <h2 class="text-xl font-semibold mb-4 section-header">Talhões</h2>
+            <button id="btn-add-talhao" class="w-full bg-green-600 text-white rounded-full py-2 px-4 mb-4 hover:bg-green-700 transition-colors duration-200 font-bold">Adicionar Talhão</button>
+            <div id="list-talhoes" class="space-y-2"></div>
+        </div>
+        
+        <!-- Insumos Tab -->
+        <div id="tab-insumos" class="tab-content hidden">
+            <h2 class="text-xl font-semibold mb-4 section-header">Insumos</h2>
+            <button id="btn-add-insumo" class="w-full bg-green-600 text-white rounded-full py-2 px-4 mb-4 hover:bg-green-700 transition-colors duration-200 font-bold">Adicionar Insumo</button>
+            <div id="list-insumos" class="space-y-2"></div>
+        </div>
+        
+        <!-- Modelos Tab -->
+        <div id="tab-modelos" class="tab-content hidden">
+            <h2 class="text-xl font-semibold mb-4 section-header">Modelos de Operação</h2>
+            <button id="btn-add-modelo" class="w-full bg-green-600 text-white rounded-full py-2 px-4 mb-4 hover:bg-green-700 transition-colors duration-200 font-bold">Adicionar Modelo</button>
+            <div id="list-modelos" class="space-y-2"></div>
+        </div>
+
+        <!-- Atividades Tab -->
+        <div id="tab-atividades" class="tab-content hidden">
+            <h2 class="text-xl font-semibold mb-4 section-header">Atividades de Campo</h2>
+            <button id="btn-add-atividade" class="w-full bg-green-600 text-white rounded-full py-2 px-4 mb-4 hover:bg-green-700 transition-colors duration-200 font-bold">Adicionar Atividade</button>
+            <div id="list-atividades" class="space-y-4"></div>
+        </div>
+        
+        <!-- Relatórios Tab -->
+        <div id="tab-relatorios" class="tab-content hidden">
+            <h2 class="text-xl font-semibold mb-4 section-header">Relatórios</h2>
+            <div class="card p-4">
+                <p class="text-base font-semibold mb-4">Filtrar Relatório</p>
+                <div class="flex flex-col gap-4">
+                    <div class="flex flex-col gap-2">
+                        <label for="select-safra" class="text-sm font-medium text-gray-700">Por Safra:</label>
+                        <select id="select-safra" class="p-2 rounded-lg border border-gray-300"></select>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label for="select-talhao" class="text-sm font-medium text-gray-700">Por Talhão:</label>
+                        <select id="select-talhao" class="p-2 rounded-lg border border-gray-300"></select>
+                    </div>
+                     <div class="flex flex-col gap-2">
+                        <label for="select-atividade" class="text-sm font-medium text-gray-700">Por Atividade:</label>
+                        <select id="select-atividade" class="p-2 rounded-lg border border-gray-300"></select>
+                    </div>
+                </div>
+                <button id="btn-generate-report" disabled class="mt-4 w-full bg-blue-600 text-white rounded-lg py-2 px-4 hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span id="report-button-text">Gerar Relatório</span>
+                </button>
+            </div>
+
+            <div id="report-output" class="card mt-4 p-4 min-h-[200px] flex items-center justify-center">
+                 <p class="text-center text-gray-500 text-sm">Selecione um filtro e clique em "Gerar" para visualizar o relatório.</p>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- Modal para Fazenda (Área) -->
+<div id="modal-area" class="modal fixed inset-0 flex items-center justify-center z-50 hidden">
+    <div class="modal-content">
+        <h3 id="modal-area-title" class="text-lg font-bold mb-4">Adicionar Fazenda</h3>
+        <form id="form-area">
+            <input type="hidden" id="area-id">
+            <label for="area-name" class="block text-sm font-medium text-gray-700">Nome da Fazenda</label>
+            <input type="text" id="area-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: Fazenda São José">
+            <div class="flex justify-end space-x-2">
+                <button type="button" id="btn-cancel-area" class="bg-gray-200 text-gray-800 rounded-md py-2 px-4 hover:bg-gray-300 transition-colors duration-200">Cancelar</button>
+                <button type="submit" class="bg-green-600 text-white rounded-md py-2 px-4 hover:bg-green-700 transition-colors duration-200">Salvar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal para Talhão -->
+<div id="modal-talhao" class="modal fixed inset-0 flex items-center justify-center z-50 hidden">
+    <div class="modal-content">
+        <h3 id="modal-talhao-title" class="text-lg font-bold mb-4">Adicionar Talhão</h3>
+        <form id="form-talhao">
+            <input type="hidden" id="talhao-id">
+            <label for="talhao-name" class="block text-sm font-medium text-gray-700">Nome do Talhão</label>
+            <input type="text" id="talhao-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: Talhão 12A">
+            
+            <label for="talhao-area" class="block text-sm font-medium text-gray-700">Área (ha)</label>
+            <input type="number" id="talhao-area" required step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: 15.50">
+            
+            <label for="talhao-area-select" class="block text-sm font-medium text-gray-700">Fazenda</label>
+            <!-- Este select é preenchido dinamicamente com as fazendas cadastradas -->
+            <select id="talhao-area-select" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4"></select>
+            
+            <label for="talhao-status-select" class="block text-sm font-medium text-gray-700">Status</label>
+            <select id="talhao-status-select" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4">
+                <option value="Em Desenvolvimento">Em Desenvolvimento</option>
+                <option value="Pronto para Colher">Pronto para Colher</option>
+                <option value="Em Renovação">Em Renovação</option>
+            </select>
+            
+            <div class="flex justify-end space-x-2">
+                <button type="button" id="btn-cancel-talhao" class="bg-gray-200 text-gray-800 rounded-md py-2 px-4 hover:bg-gray-300 transition-colors duration-200">Cancelar</button>
+                <button type="submit" class="bg-green-600 text-white rounded-md py-2 px-4 hover:bg-green-700 transition-colors duration-200">Salvar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal para Insumo -->
+<div id="modal-insumo" class="modal fixed inset-0 flex items-center justify-center z-50 hidden">
+    <div class="modal-content">
+        <h3 id="modal-insumo-title" class="text-lg font-bold mb-4">Adicionar Insumo</h3>
+        <form id="form-insumo">
+            <input type="hidden" id="insumo-id">
+            <label for="insumo-name" class="block text-sm font-medium text-gray-700">Nome do Insumo</label>
+            <input type="text" id="insumo-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: Fertilizante NPK">
+            
+            <label for="insumo-quantity" class="block text-sm font-medium text-gray-700">Quantidade em Estoque</label>
+            <input type="number" id="insumo-quantity" required step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: 500.00">
+            
+            <label for="insumo-unit" class="block text-sm font-medium text-gray-700">Unidade de Medida</label>
+            <input type="text" id="insumo-unit" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: kg, L, ton">
+            
+            <label for="insumo-cost" class="block text-sm font-medium text-gray-700">Custo Unitário (R$)</label>
+            <input type="number" id="insumo-cost" required step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: 2.50">
+            
+            <div class="flex justify-end space-x-2">
+                <button type="button" id="btn-cancel-insumo" class="bg-gray-200 text-gray-800 rounded-md py-2 px-4 hover:bg-gray-300 transition-colors duration-200">Cancelar</button>
+                <button type="submit" class="bg-green-600 text-white rounded-md py-2 px-4 hover:bg-green-700 transition-colors duration-200">Salvar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal para Modelo -->
+<div id="modal-modelo" class="modal fixed inset-0 flex items-center justify-center z-50 hidden">
+    <div class="modal-content">
+        <h3 id="modal-modelo-title" class="text-lg font-bold mb-4">Adicionar Modelo</h3>
+        <form id="form-modelo">
+            <input type="hidden" id="modelo-id">
+            <label for="modelo-name" class="block text-sm font-medium text-gray-700">Nome do Modelo</label>
+            <input type="text" id="modelo-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: Adubação de Cobertura">
+            
+            <label for="modelo-description" class="block text-sm font-medium text-gray-700">Descrição</label>
+            <input type="text" id="modelo-description" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: Aplicação de fertilizante com trator">
+            
+            <label for="modelo-unit" class="block text-sm font-medium text-gray-700">Unidade Padrão</label>
+            <input type="text" id="modelo-unit" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: ha">
+            
+            <div class="flex justify-end space-x-2">
+                <button type="button" id="btn-cancel-modelo" class="bg-gray-200 text-gray-800 rounded-md py-2 px-4 hover:bg-gray-300 transition-colors duration-200">Cancelar</button>
+                <button type="submit" class="bg-green-600 text-white rounded-md py-2 px-4 hover:bg-green-700 transition-colors duration-200">Salvar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal para Atividade -->
+<div id="modal-atividade" class="modal fixed inset-0 flex items-center justify-center z-50 hidden">
+    <div class="modal-content">
+        <h3 id="modal-atividade-title" class="text-lg font-bold mb-4">Adicionar Atividade</h3>
+        <form id="form-atividade">
+            <input type="hidden" id="atividade-id">
+            <label for="atividade-name" class="block text-sm font-medium text-gray-700">Nome da Atividade</label>
+            <input type="text" id="atividade-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: Plantio">
+            
+            <label for="atividade-safra" class="block text-sm font-medium text-gray-700">Safra</label>
+            <input type="number" id="atividade-safra" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: 2025">
+            
+            <label for="atividade-talhao-select" class="block text-sm font-medium text-gray-700">Talhão</label>
+            <!-- Este select é preenchido dinamicamente com os talhões cadastrados -->
+            <select id="atividade-talhao-select" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4"></select>
+            
+            <div class="flex justify-end space-x-2">
+                <button type="button" id="btn-cancel-atividade" class="bg-gray-200 text-gray-800 rounded-md py-2 px-4 hover:bg-gray-300 transition-colors duration-200">Cancelar</button>
+                <button type="submit" class="bg-green-600 text-white rounded-md py-2 px-4 hover:bg-green-700 transition-colors duration-200">Salvar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal para Operação -->
+<div id="modal-operacao" class="modal fixed inset-0 flex items-center justify-center z-50 hidden">
+    <div class="modal-content">
+        <h3 id="modal-operacao-title" class="text-lg font-bold mb-4">Adicionar Operação</h3>
+        <form id="form-operacao">
+            <input type="hidden" id="operacao-id">
+            <input type="hidden" id="operacao-atividade-id">
+
+            <label for="operacao-modelo-select" class="block text-sm font-medium text-gray-700">Modelo (opcional)</label>
+            <select id="operacao-modelo-select" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4"></select>
+
+            <label for="operacao-description" class="block text-sm font-medium text-gray-700">Descrição</label>
+            <input type="text" id="operacao-description" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: Pulverização para pragas">
+            
+            <div class="flex gap-4 mb-4">
+                <div class="flex-1">
+                    <label for="operacao-quantity" class="block text-sm font-medium text-gray-700">Quantidade</label>
+                    <input type="number" id="operacao-quantity" required step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" placeholder="Ex: 1">
+                </div>
+                <div class="flex-1">
+                    <label for="operacao-unit" class="block text-sm font-medium text-gray-700">Unidade</label>
+                    <input type="text" id="operacao-unit" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2" placeholder="Ex: ha">
+                </div>
+            </div>
+            
+            <label for="operacao-cost" class="block text-sm font-medium text-gray-700">Custo da Operação (R$)</label>
+            <input type="number" id="operacao-cost" required step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 mb-4" placeholder="Ex: 15.00">
+            
+            <div class="mt-4 border-t pt-4 border-gray-200">
+                <div class="flex justify-between items-center mb-2">
+                    <p class="font-bold text-sm">Insumos Utilizados:</p>
+                    <button type="button" id="btn-add-insumo-field" class="text-blue-600 hover:text-blue-800 text-sm font-semibold">Adicionar Insumo</button>
+                </div>
+                <div id="insumos-list">
+                    <!-- Insumos serão adicionados dinamicamente aqui -->
+                </div>
+            </div>
+
+            <div class="flex justify-end space-x-2 mt-4">
+                <button type="button" id="btn-cancel-operacao" class="bg-gray-200 text-gray-800 rounded-md py-2 px-4 hover:bg-gray-300 transition-colors duration-200">Cancelar</button>
+                <button type="submit" class="bg-green-600 text-white rounded-md py-2 px-4 hover:bg-green-700 transition-colors duration-200">Salvar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal de Alerta -->
+<div id="modal-alert" class="modal fixed inset-0 flex items-center justify-center z-50 hidden">
+    <div class="modal-content text-center">
+        <h3 class="text-lg font-bold mb-4 text-red-600">Alerta</h3>
+        <p id="alert-message" class="text-sm text-gray-700 mb-4"></p>
+        <button id="btn-ok-alert" class="bg-red-500 text-white rounded-md py-2 px-4 hover:bg-red-600 transition-colors duration-200">OK</button>
+    </div>
+</div>
+
+<!-- Modal de Confirmação -->
+<div id="modal-confirm" class="modal fixed inset-0 flex items-center justify-center z-50 hidden">
+    <div class="modal-content text-center">
+        <h3 id="confirm-title" class="text-lg font-bold mb-4 text-gray-800">Confirmar</h3>
+        <p id="confirm-message" class="text-sm text-gray-700 mb-4"></p>
+        <div class="flex justify-center space-x-4">
+            <button id="btn-cancel-confirm" class="bg-gray-200 text-gray-800 rounded-md py-2 px-4 hover:bg-gray-300 transition-colors duration-200">Cancelar</button>
+            <button id="btn-confirm-action" class="bg-red-500 text-white rounded-md py-2 px-4 hover:bg-red-600 transition-colors duration-200">Confirmar</button>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>
