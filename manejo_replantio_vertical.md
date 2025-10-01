@@ -117,11 +117,114 @@ O replantio vertical com superfosfato simples é uma boa escolha porque:
 - ✅ Menor custo inicial de implantação
 - ✅ Facilita mecanização futura
 
+## ETAPAS PÓS-ADUBAÇÃO (Muito Importante!)
+
+### IMEDIATAMENTE APÓS ADUBAR:
+
+**1. Incorporação do Adubo (OBRIGATÓRIO)**
+- Fazer sulco raso (5-8cm) ao lado das mudas
+- Cobrir o adubo com terra
+- **SEM ISSO O ADUBO PERDE EFICIÊNCIA!**
+
+**2. Irrigação ou Aguardar Chuva**
+- Irrigar com 15-20L por metro linear (se possível)
+- OU aguardar chuva de pelo menos 10mm
+- **Adubo só funciona com umidade!**
+
+### PRIMEIRAS 2 SEMANAS PÓS-ADUBAÇÃO:
+
+**3. Controle de Ervas Daninhas**
+- Aplicar herbicida seletivo (2,4-D) nas entrelinhas
+- Capinar manualmente ao redor das mudas (raio de 50cm)
+- **Ervas competem pelos nutrientes que você aplicou!**
+
+**4. Monitoramento Semanal**
+- Contar quantas gemas brotaram por muda
+- Medir altura das brotações
+- Observar cor das folhas (deve ficar verde escuro)
+
+**5. Controle de Pragas**
+- Verificar presença de pulgões nas brotações novas
+- Aplicar inseticida se necessário (Imidacloprido)
+- **Mudas jovens são mais vulneráveis!**
+
+### SEMANAS 3-4 PÓS-ADUBAÇÃO:
+
+**6. Segunda Aplicação de Nitrogênio**
+- Aplicar mais 50-100g de ureia por metro linear
+- **As mudas estarão crescendo rápido e precisando mais N**
+
+**7. Ajustes no Desbaste da Soqueira**
+- Remover novos perfilhos que surgirem
+- Manter os "corredores de luz" abertos
+- **A soqueira vai tentar rebrotar!**
+
+**8. Aplicação de Micronutrientes**
+- Sulfato de zinco: 2g por metro linear
+- Ácido bórico: 1g por metro linear
+- **Para desenvolvimento saudável das mudas**
+
+### SEMANAS 5-8 PÓS-ADUBAÇÃO:
+
+**9. Avaliação do Estabelecimento**
+- Mudas devem ter 40-60cm de altura
+- 3-4 perfilhos por muda
+- Folhas verde escuras
+
+**10. Redução Gradual das Intervenções**
+- Menos desbaste da soqueira
+- Monitoramento quinzenal
+- Preparação para próxima adubação (60-90 dias)
+
+## CHECKLIST PÓS-ADUBAÇÃO (Imprimir e Usar!)
+
+**SEMANA 1:**
+- [ ] Incorporar adubo no solo
+- [ ] Irrigar ou aguardar chuva
+- [ ] Capinar ao redor das mudas
+- [ ] Aplicar herbicida nas entrelinhas
+
+**SEMANA 2:**
+- [ ] Contar brotações por muda
+- [ ] Verificar pragas
+- [ ] Medir altura das mudas
+- [ ] Ajustar desbaste da soqueira
+
+**SEMANA 3:**
+- [ ] Segunda aplicação de ureia
+- [ ] Aplicar micronutrientes
+- [ ] Controle de ervas daninhas
+- [ ] Monitorar desenvolvimento
+
+**SEMANA 4:**
+- [ ] Avaliação geral do replantio
+- [ ] Documentar resultados
+- [ ] Planejar próximas ações
+- [ ] Calcular taxa de pegamento
+
+## SINAIS DE ALERTA PÓS-ADUBAÇÃO:
+
+⚠️ **Se em 10 dias não houver brotação nova**
+⚠️ **Se as folhas ficarem amarelas**
+⚠️ **Se aparecerem pragas em excesso**
+⚠️ **Se as mudas não crescerem**
+
+**AÇÃO:** Reavaliar adubação e fazer correções
+
+## CUSTOS ADICIONAIS PÓS-ADUBAÇÃO:
+
+- Herbicida: R$ 30-50 por hectare
+- Inseticida: R$ 40-60 por hectare  
+- Micronutrientes: R$ 20-30 por hectare
+- Mão de obra: R$ 100-150 por hectare
+- **Total adicional: R$ 190-290 por hectare**
+
 ## Próximos Passos Recomendados
 
 1. **HOJE**: Fazer o desbaste agressivo da soqueira
-2. **ESTA SEMANA**: Aplicar ureia + potássio
+2. **ESTA SEMANA**: Aplicar ureia + potássio + incorporar
 3. **PRÓXIMA SEMANA**: Monitorar brotação das gemas
-4. **15 DIAS**: Avaliar necessidade de nova adubação
+4. **15 DIAS**: Segunda aplicação de nitrogênio
+5. **30 DIAS**: Avaliação completa do estabelecimento
 
-Com essas medidas, seu replantio vertical deve se estabelecer bem mesmo com a competição da soqueira!
+**LEMBRE-SE: O trabalho não acaba na adubação - o acompanhamento pós-adubação é que garante o sucesso do replantio vertical!**
